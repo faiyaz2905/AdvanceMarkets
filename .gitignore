@@ -1,4 +1,21 @@
+# Node
 node_modules
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+*.egg-info/
+
+# Environment
 .env
+.env.local
+
+# OS
 .DS_Store
+Thumbs.db
+
+# Logs
 *.log

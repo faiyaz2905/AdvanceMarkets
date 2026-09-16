@@ -1,5 +1,6 @@
 {
-    "version": 2,
+    "$schema": "https://openapi.vercel.sh/vercel.json",
+    "framework": "fastapi",
     "headers": [
         {
             "source": "/(.*)",
@@ -11,20 +12,5 @@
                 { "key": "Content-Security-Policy", "value": "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'" }
             ]
         }
-    ],
-    "rewrites": [
-        {
-            "source": "/api/(.*)",
-            "destination": "/api/index.py"
-        },
-        {
-            "source": "/",
-            "destination": "/frontend/index.html"
-        },
-        {
-            "source": "/(.*)",
-            "destination": "/frontend/$1"
-        }
-    ],
-    "cleanUrls": true
+    ]
 }

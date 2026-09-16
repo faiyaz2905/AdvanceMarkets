@@ -1,970 +1,544 @@
-/* ============================================
-   AdvanceMarkets Terminal — App Logic v3.0
-   Sustainability & Carbon Market Intelligence
-   Python (FastAPI) Backend Edition
-   ============================================ */
-
-// ─── Config ──────────────────────────────────────────────────
 const CONFIG = {
-    BASE_URL: '/api',
-    REFRESH_INTERVAL: 300000,
-    TICKERS: [
-        { symbol: 'KRBN', name: 'KraneShares Global Carbon Strategy ETF', short: 'Global Carbon', badge: 'CARBON', badgeClass: '', isApi: true, color: '#00e676', colorDim: 'rgba(0,230,118,0.12)', source: 'https://twelvedata.com/symbol/KRBN' },
-        { symbol: 'GRN', name: 'iPath Series B Carbon ETN', short: 'Carbon ETN', badge: 'CARBON', badgeClass: '', isApi: true, color: '#00e5ff', colorDim: 'rgba(0,229,255,0.12)', source: 'https://twelvedata.com/symbol/GRN' },
-        { symbol: 'KCCA', name: 'KraneShares California Carbon Allowance ETF', short: 'California CCA', badge: 'CCA', badgeClass: 'cca', isApi: true, color: '#ffab40', colorDim: 'rgba(255,171,64,0.12)', source: 'https://twelvedata.com/symbol/KCCA' },
-        { symbol: 'CTWO', name: 'COtwo Physical EU Carbon Allowance Trust', short: 'EU Carbon (EUA)', badge: 'EUA', badgeClass: 'eua', isApi: true, color: '#ff4081', colorDim: 'rgba(255,64,129,0.12)', source: 'https://twelvedata.com/symbol/CTWO' },
-        { symbol: 'ICLN', name: 'iShares Global Clean Energy ETF', short: 'Clean Energy', badge: 'ENERGY', badgeClass: 'energy', isApi: true, color: '#448aff', colorDim: 'rgba(68,138,255,0.12)', source: 'https://twelvedata.com/symbol/ICLN' },
-        { symbol: 'BIOCHAR', name: 'Biochar Carbon Credits (Voluntary)', short: 'Biochar', badge: 'VOLUNTARY', badgeClass: 'voluntary', isApi: false, refPrice: 150.00, refUnit: '/mtCO₂e', color: '#b388ff', colorDim: 'rgba(179,136,255,0.12)', source: 'https://puro.earth' },
+    baseUrl: "/api",
+    refreshMs: 300000,
+    requestTimeoutMs: 15000,
+    instruments: [
+        { symbol: "KRBN", name: "Global Carbon Strategy ETF", market: "Global compliance", type: "ETF proxy", description: "Tracks a basket of major compliance allowance futures, including EU, California, UK, RGGI, and Washington markets.", source: "https://kraneshares.com/etf/krbn/" },
+        { symbol: "KCCA", name: "California Carbon Allowance Strategy ETF", market: "California / Quebec", type: "ETF proxy", description: "Provides futures-based exposure to the California and Quebec linked cap-and-trade market.", source: "https://kraneshares.com/etf/kcca/" },
+        { symbol: "CTWO", name: "Physical European Carbon Allowance Trust", market: "EU ETS", type: "Physical trust", description: "Holds European Union Allowances and is designed to reflect EUA performance less trust expenses.", source: "https://www.sec.gov/Archives/edgar/data/1958928/000121390026021883/ea0277806-10k_cotwo.htm" },
+        { symbol: "GRN", name: "iPath Series B Carbon ETN", market: "Global compliance", type: "ETN proxy", description: "An exchange-traded note linked to a global carbon allowance index; it also carries issuer credit risk.", source: "https://twelvedata.com/symbol/GRN" },
     ],
+    timeframes: {
+        "1day": { interval: "15min", outputsize: 32, label: "1D" },
+        "1week": { interval: "1h", outputsize: 40, label: "1W" },
+        "1month": { interval: "1day", outputsize: 30, label: "1M" },
+        "3months": { interval: "1day", outputsize: 90, label: "3M" },
+        "1year": { interval: "1week", outputsize: 52, label: "1Y" },
+    },
 };
 
-const TIMEFRAME_MAP = {
-    '1day': { interval: '15min', outputsize: 30, label: '1 Day' },
-    '1week': { interval: '1h', outputsize: 40, label: '1 Week' },
-    '1month': { interval: '1day', outputsize: 30, label: '1 Month' },
-    '3months': { interval: '1day', outputsize: 90, label: '3 Months' },
-    '1year': { interval: '1week', outputsize: 52, label: '1 Year' },
-};
-
-// Top carbon credit buyers (public data from CDR.fyi, sustainability reports)
-const TOP_BUYERS = [
-    { name: 'Microsoft', amount: 3500000, spend: 525, type: 'removal', label: '3.5M mtCO₂e', source: 'https://www.microsoft.com/en-us/corporate-responsibility/sustainability' },
-    { name: 'Google/Alphabet', amount: 1200000, spend: 180, type: 'mixed', label: '1.2M mtCO₂e', source: 'https://sustainability.google' },
-    { name: 'JPMorgan Chase', amount: 800000, spend: 120, type: 'mixed', label: '800K mtCO₂e', source: 'https://www.jpmorganchase.com/impact/sustainability' },
-    { name: 'Stripe', amount: 500000, spend: 75, type: 'removal', label: '500K mtCO₂e', source: 'https://stripe.com/climate' },
-    { name: 'Meta Platforms', amount: 400000, spend: 60, type: 'mixed', label: '400K mtCO₂e', source: 'https://sustainability.fb.com' },
-    { name: 'Shopify', amount: 350000, spend: 52, type: 'removal', label: '350K mtCO₂e', source: 'https://www.shopify.com/climate' },
-    { name: 'Swiss Re', amount: 280000, spend: 42, type: 'removal', label: '280K mtCO₂e', source: 'https://www.swissre.com/sustainability.html' },
-    { name: 'Salesforce', amount: 250000, spend: 38, type: 'avoidance', label: '250K mtCO₂e', source: 'https://www.salesforce.com/company/sustainability/' },
-];
-
-// Carbon removal project categories
-const PROJECT_CATEGORIES = [
-    { icon: '🌳', name: 'REDD+', type: 'nature', desc: 'Reducing emissions from deforestation and forest degradation' },
-    { icon: '🌊', name: 'Blue Carbon', type: 'nature', desc: 'Mangroves, seagrasses, and tidal marshes carbon sequestration' },
-    { icon: '🔥', name: 'Biochar', type: 'nature', desc: 'Pyrolysis-based carbon storage in soil amendments' },
-    { icon: '🏭', name: 'Direct Air Capture', type: 'engineered', desc: 'Mechanical CO₂ removal from ambient air + geological storage' },
-    { icon: '⛰️', name: 'Enhanced Weathering', type: 'engineered', desc: 'Crushed rock mineral carbonation for permanent CO₂ removal' },
-    { icon: '🌾', name: 'Regenerative Agriculture', type: 'nature', desc: 'Soil carbon sequestration through improved farming practices' },
-    { icon: '🧪', name: 'BECCS', type: 'engineered', desc: 'Bioenergy with carbon capture and storage' },
-    { icon: '🪨', name: 'Mineral Carbonation', type: 'engineered', desc: 'Permanent CO₂ mineralization in geological formations' },
-];
-
-// Placeholder news — will be replaced by backend scraper
-const NEWS_ITEMS = [
-    { cat: 'market', text: 'EU ETS carbon allowance prices fall 2.3% as power sector emissions decline across Western Europe', url: 'https://carbon-pulse.com' },
-    { cat: 'science', text: 'Stanford researchers develop biochar process that captures 40% more CO₂ per ton — published in Nature Energy', url: 'https://www.nature.com/nenergy/' },
-    { cat: 'deals', text: 'Microsoft purchases 500K high-quality biochar removal credits from Charm Industrial at $155/mt', url: 'https://www.cdr.fyi' },
-    { cat: 'policy', text: 'EU CBAM Phase 2 regulations finalized — expanded coverage for aluminum and chemicals from Jan 2027', url: 'https://taxation-customs.ec.europa.eu/carbon-border-adjustment-mechanism_en' },
-    { cat: 'market', text: 'California carbon allowance auction clears at $38.52/mt — highest since Q3 2024', url: 'https://ww2.arb.ca.gov/our-work/programs/cap-and-trade-program' },
-    { cat: 'science', text: 'ETH Zurich team achieves breakthrough in direct air capture efficiency — cost down to $250/ton', url: 'https://ethz.ch/en/research.html' },
-    { cat: 'deals', text: 'Google signs 10-year carbon removal agreement with Climeworks worth estimated $180M', url: 'https://climeworks.com' },
-    { cat: 'policy', text: 'US SEC finalizes climate disclosure rules requiring Scope 1 & 2 emissions reporting for large filers', url: 'https://www.sec.gov/climate-disclosures' },
-    { cat: 'market', text: 'RGGI carbon permit prices steady at $14.80 amid increased auction participation from utilities', url: 'https://www.rggi.org' },
-    { cat: 'science', text: 'Ocean-based carbon removal startup Running Tide completes 10,000 ton verification milestone', url: 'https://www.runningtide.com' },
-    { cat: 'deals', text: 'Stripe Climate funds $8M in new biochar projects across Southeast Asia through Frontier portfolio', url: 'https://frontierclimate.com' },
-    { cat: 'policy', text: 'Article 6 carbon credit framework sees first cross-border transaction — Switzerland and Thailand', url: 'https://unfccc.int/process-and-meetings/the-paris-agreement/article-64-mechanism' },
-];
-
-// ─── State ───────────────────────────────────────────────────
 const state = {
-    prices: {},
-    prevPrices: {},
-    selectedTicker: 'KRBN',
-    selectedTimeframe: '1month',
-    selectedAIBand: '1d',
-    selectedTab: 'prices',
-    selectedNewsFilter: 'all',
+    quotes: {},
+    selectedSymbol: "KRBN",
+    selectedTimeframe: "1month",
+    selectedNewsFilter: "all",
+    news: [],
     chart: null,
-    isFirstLoad: true,
     chatHistory: [],
-    allNews: [],
+    newsIndex: 0,
+    newsTimer: null,
 };
 
-// ─── DOM ─────────────────────────────────────────────────────
-const $ = (id) => document.getElementById(id);
-const DOM = {
-    tickerStrip: $('tickerStrip'),
-    connectionStatus: $('connectionStatus'),
-    lastUpdated: $('lastUpdated'),
-    tickerCount: $('tickerCount'),
-    chartTitle: $('chartTitle'),
-    chartLoading: $('chartLoading'),
-    priceChart: $('priceChart'),
-    timeframeSelector: $('timeframeSelector'),
-    aiTimebandSelector: $('aiTimebandSelector'),
-    aiSummaryBody: $('aiSummaryBody'),
-    aiTimestamp: $('aiTimestamp'),
-    buyersList: $('buyersList'),
-    tickerScroll: $('tickerScroll'),
-    marketTableBody: $('marketTableBody'),
-    statOpen: $('statOpen'),
-    statHigh: $('statHigh'),
-    statLow: $('statLow'),
-    statVolume: $('statVolume'),
-    statAvg: $('statAvg'),
-    apiCredits: $('apiCredits'),
-    // v3.0 — New DOM elements
-    tabNav: $('tabNav'),
-    newsFeed: $('newsFeed'),
-    newsFilterGroup: $('newsFilterGroup'),
-    chatMessages: $('chatMessages'),
-    chatInput: $('chatInput'),
-    chatSendBtn: $('chatSendBtn'),
-    quickPrompts: $('quickPrompts'),
-    moversList: $('moversList'),
-    sentimentValue: $('sentimentValue'),
-    sentimentFill: $('sentimentFill'),
-    projectCards: $('projectCards'),
-    trendsBuyersList: $('trendsBuyersList'),
-};
+const byId = id => document.getElementById(id);
+const instrumentFor = symbol => CONFIG.instruments.find(item => item.symbol === symbol);
+const quoteStoreKey = "advance_markets_last_quotes_v1";
 
-// ─── Helpers ─────────────────────────────────────────────────
-const fmt = (v) => v == null || isNaN(v) ? '--' : '$' + parseFloat(v).toFixed(2);
-const fmtChange = (v) => { if (v == null || isNaN(v)) return '--'; const n = parseFloat(v); return (n >= 0 ? '+' : '') + n.toFixed(2); };
-const fmtPct = (v) => { if (v == null || isNaN(v)) return '--'; const n = parseFloat(v); return (n >= 0 ? '+' : '') + n.toFixed(2) + '%'; };
-const fmtVol = (v) => { if (v == null || isNaN(v)) return '--'; const n = parseInt(v); if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M'; if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K'; return n.toLocaleString(); };
-
-function setStatus(type, text) {
-    const dot = DOM.connectionStatus.querySelector('.status-dot');
-    const txt = DOM.connectionStatus.querySelector('.status-text');
-    dot.className = 'status-dot' + (type === 'ok' ? ' ok' : type === 'err' ? ' err' : '');
-    txt.textContent = text;
+function formatPrice(value, currency = "USD") {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return "--";
+    return new Intl.NumberFormat("en-US", { style: "currency", currency, minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(number);
 }
 
-function toast(msg) {
-    const existing = document.querySelector('.error-toast');
-    if (existing) existing.remove();
-    const el = document.createElement('div');
-    el.className = 'error-toast';
-    el.textContent = '⚠ ' + msg;
-    document.body.appendChild(el);
-    setTimeout(() => el.remove(), 5000);
+function formatPercent(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return "--";
+    return `${number >= 0 ? "+" : ""}${number.toFixed(2)}%`;
 }
 
-// ─── TAB NAVIGATION ─────────────────────────────────────────
-function setupTabs() {
-    DOM.tabNav.addEventListener('click', e => {
-        const btn = e.target.closest('.tab-btn');
-        if (!btn) return;
-        switchTab(btn.dataset.tab);
-    });
+function formatVolume(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return "--";
+    return Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(number);
 }
 
-function switchTab(tabId) {
-    state.selectedTab = tabId;
-
-    // Update tab buttons
-    document.querySelectorAll('.tab-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.tab === tabId);
-    });
-
-    // Update tab content
-    document.querySelectorAll('.tab-content').forEach(content => {
-        content.classList.remove('active');
-    });
-    const contentMap = {
-        prices: 'tabPrices',
-        news: 'tabNews',
-        trends: 'tabTrends',
-        ai: 'tabAI',
-    };
-    const targetContent = $(contentMap[tabId]);
-    if (targetContent) targetContent.classList.add('active');
-
-    // Lazy-load content when tab is first opened
-    if (tabId === 'news') {
-        if (state.allNews.length === 0) {
-            loadNewsFeed();
-        } else {
-            renderNewsFeed(state.allNews);
-        }
-    }
-    if (tabId === 'trends') {
-        renderTrends();
-    }
+function formatTimestamp(value, includeDate = false) {
+    if (!value) return "--";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "--";
+    return new Intl.DateTimeFormat(undefined, {
+        month: includeDate ? "short" : undefined,
+        day: includeDate ? "numeric" : undefined,
+        hour: "2-digit",
+        minute: "2-digit",
+        timeZoneName: includeDate ? "short" : undefined,
+    }).format(date);
 }
 
-// ─── API CREDIT TRACKING ─────────────────────────────────────
-const API_DAILY_LIMIT = 800;
-const API_MINUTE_LIMIT = 8;
-
-function getApiUsage() {
-    const stored = localStorage.getItem('carbonpulse_api_usage');
-    if (stored) {
-        const data = JSON.parse(stored);
-        const today = new Date().toDateString();
-        if (data.date === today) return data;
-    }
-    const fresh = { date: new Date().toDateString(), count: 0, minuteLog: [] };
-    localStorage.setItem('carbonpulse_api_usage', JSON.stringify(fresh));
-    return fresh;
-}
-
-function trackApiCall() {
-    const usage = getApiUsage();
-    usage.count++;
-    const now = Date.now();
-    usage.minuteLog.push(now);
-    usage.minuteLog = usage.minuteLog.filter(t => now - t < 60000);
-    localStorage.setItem('carbonpulse_api_usage', JSON.stringify(usage));
-    updateApiDisplay(usage);
-    return usage;
-}
-
-function updateApiDisplay(usage) {
-    if (!usage) usage = getApiUsage();
-    const el = DOM.apiCredits;
-    if (!el) return;
-    const pct = usage.count / API_DAILY_LIMIT;
-    const perMin = usage.minuteLog ? usage.minuteLog.filter(t => Date.now() - t < 60000).length : 0;
-
-    el.textContent = `${usage.count}/${API_DAILY_LIMIT}`;
-
-    if (usage.count >= API_DAILY_LIMIT) {
-        el.style.color = '#ff5252';
-        el.title = 'DAILY LIMIT REACHED — Resets at midnight';
-    } else if (pct >= 0.8) {
-        el.style.color = '#ffab40';
-        el.title = `${API_DAILY_LIMIT - usage.count} credits remaining today`;
-    } else if (perMin >= API_MINUTE_LIMIT) {
-        el.style.color = '#ffab40';
-        el.title = `Rate limit: ${perMin}/${API_MINUTE_LIMIT} calls this minute`;
-    } else {
-        el.style.color = '';
-        el.title = `${API_DAILY_LIMIT - usage.count} credits remaining today | ${perMin}/${API_MINUTE_LIMIT} this minute`;
-    }
-}
-
-function canMakeApiCall() {
-    const usage = getApiUsage();
-    if (usage.count >= API_DAILY_LIMIT) {
-        toast(`Daily API limit reached (${API_DAILY_LIMIT}). Resets at midnight.`);
-        return false;
-    }
-    return true;
-}
-
-// ─── API ─────────────────────────────────────────────────────
-async function fetchQuote(symbol) {
-    if (!canMakeApiCall()) return null;
-    trackApiCall();
-    const r = await fetch(`${CONFIG.BASE_URL}/quote?symbol=${symbol}`);
-    const d = await r.json();
-    if (d.error || d.detail) throw new Error(d.error || d.detail);
-    return d;
-}
-
-async function fetchTimeSeries(symbol, interval, outputsize) {
-    if (!canMakeApiCall()) return null;
-    trackApiCall();
-    const r = await fetch(`${CONFIG.BASE_URL}/time_series?symbol=${symbol}&interval=${interval}&outputsize=${outputsize}`);
-    const d = await r.json();
-    if (d.error || d.detail) throw new Error(d.error || d.detail);
-    return d;
-}
-
-async function fetchAllQuotes() {
-    const results = {};
-    const apiTickers = CONFIG.TICKERS.filter(t => t.isApi);
-    for (const t of apiTickers) {
-        try {
-            results[t.symbol] = await fetchQuote(t.symbol);
-        } catch (e) {
-            console.error(`Fetch ${t.symbol}:`, e);
-            results[t.symbol] = null;
-        }
-        await new Promise(r => setTimeout(r, 1500));
-    }
-    return results;
-}
-
-// ─── TICKER STRIP ────────────────────────────────────────────
-function renderTickerStrip() {
-    DOM.tickerStrip.innerHTML = CONFIG.TICKERS.map(t => {
-        const isActive = t.symbol === state.selectedTicker;
-        if (!t.isApi) {
-            return `<div class="ticker-item${isActive ? ' active' : ''}" data-symbol="${t.symbol}">
-                <span class="t-symbol">${t.symbol}</span>
-                <span class="t-price">${fmt(t.refPrice)}</span>
-                <span class="t-change flat">${t.refUnit}</span>
-                <span class="t-badge ${t.badgeClass}">${t.badge}</span>
-            </div>`;
-        }
-        return `<div class="ticker-item skeleton${isActive ? ' active' : ''}" data-symbol="${t.symbol}">
-            <span class="t-symbol">${t.symbol}</span>
-            <span class="t-price">--</span>
-            <span class="t-change flat">--</span>
-            <span class="t-badge ${t.badgeClass}">${t.badge}</span>
-        </div>`;
-    }).join('');
-
-    DOM.tickerStrip.querySelectorAll('.ticker-item').forEach(el => {
-        el.addEventListener('click', () => {
-            const sym = el.dataset.symbol;
-            const tk = CONFIG.TICKERS.find(t => t.symbol === sym);
-            if (tk && tk.isApi) selectTicker(sym);
-        });
-    });
-}
-
-function updateTickerStrip(quotes) {
-    let loaded = 0;
-    CONFIG.TICKERS.forEach(t => {
-        if (!t.isApi) { loaded++; return; }
-        const el = DOM.tickerStrip.querySelector(`[data-symbol="${t.symbol}"]`);
-        if (!el) return;
-        const d = quotes[t.symbol];
-        if (!d) return;
-        loaded++;
-        el.classList.remove('skeleton');
-        const change = parseFloat(d.change);
-        const pct = parseFloat(d.percent_change);
-        const dir = change >= 0 ? 'up' : 'down';
-        if (change === 0) {
-            el.querySelector('.t-change').className = 't-change flat';
-        }
-        el.querySelector('.t-price').textContent = fmt(d.close);
-        const changeEl = el.querySelector('.t-change');
-        changeEl.textContent = fmtPct(pct);
-        changeEl.className = 't-change ' + (change === 0 ? 'flat' : dir);
-
-        // Flash animation
-        const prev = state.prevPrices[t.symbol];
-        if (prev != null && prev !== parseFloat(d.close)) {
-            el.style.animation = 'none';
-            el.offsetHeight;
-            el.style.animation = parseFloat(d.close) > prev ? 'flash-up 0.8s ease-out' : 'flash-down 0.8s ease-out';
-        }
-    });
-    DOM.tickerCount.textContent = `${loaded}/${CONFIG.TICKERS.length}`;
-}
-
-// ─── CHART ───────────────────────────────────────────────────
-async function loadChart(symbol, tfKey) {
-    const tf = TIMEFRAME_MAP[tfKey];
-    const tk = CONFIG.TICKERS.find(t => t.symbol === symbol);
-    DOM.chartLoading.classList.remove('hidden');
-    DOM.chartTitle.textContent = `${symbol} — ${tk.short}`;
-
+function safeUrl(value) {
     try {
-        const data = await fetchTimeSeries(symbol, tf.interval, tf.outputsize);
-        if (!data || !data.values?.length) throw new Error('No data');
-
-        const vals = data.values.slice().reverse();
-        const labels = vals.map(v => v.datetime);
-        const prices = vals.map(v => parseFloat(v.close));
-        const highs = vals.map(v => parseFloat(v.high));
-        const lows = vals.map(v => parseFloat(v.low));
-        const vols = vals.map(v => parseInt(v.volume || 0));
-        const opens = vals.map(v => parseFloat(v.open));
-
-        DOM.statOpen.textContent = fmt(opens[opens.length - 1]);
-        DOM.statHigh.textContent = fmt(Math.max(...highs));
-        DOM.statLow.textContent = fmt(Math.min(...lows));
-        DOM.statVolume.textContent = fmtVol(vols.reduce((a, b) => a + b, 0));
-        DOM.statAvg.textContent = fmt(prices.reduce((a, b) => a + b, 0) / prices.length);
-
-        renderChart(labels, prices, tk);
-    } catch (e) {
-        console.error('Chart error:', e);
-        toast(`Chart: ${e.message}`);
-    } finally {
-        DOM.chartLoading.classList.add('hidden');
+        const url = new URL(value);
+        return ["http:", "https:"].includes(url.protocol) ? url.href : null;
+    } catch {
+        return null;
     }
 }
 
-function renderChart(labels, prices, tk) {
-    const ctx = DOM.priceChart.getContext('2d');
+async function fetchJson(path, options = {}) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), CONFIG.requestTimeoutMs);
+    try {
+        const response = await fetch(`${CONFIG.baseUrl}${path}`, { ...options, signal: controller.signal });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail || `Request failed (${response.status})`);
+        return data;
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+function readStoredQuotes() {
+    try {
+        const stored = JSON.parse(localStorage.getItem(quoteStoreKey) || "{}");
+        return stored && typeof stored === "object" ? stored : {};
+    } catch {
+        return {};
+    }
+}
+
+function storeLiveQuotes(quotes) {
+    const existing = readStoredQuotes();
+    Object.entries(quotes).forEach(([symbol, quote]) => {
+        if (quote?.close != null && quote.status !== "stale") existing[symbol] = quote;
+    });
+    localStorage.setItem(quoteStoreKey, JSON.stringify(existing));
+}
+
+function mergeWithLastKnown(apiQuotes = {}) {
+    const stored = readStoredQuotes();
+    const merged = {};
+    CONFIG.instruments.forEach(({ symbol }) => {
+        const current = apiQuotes[symbol];
+        merged[symbol] = current?.close != null ? current : stored[symbol] ? { ...stored[symbol], status: "stale" } : null;
+    });
+    return merged;
+}
+
+function setConnection(status, label) {
+    const container = byId("connectionStatus");
+    const dot = container.querySelector(".status-dot");
+    dot.className = `status-dot ${status}`;
+    container.querySelector(".status-text").textContent = label;
+}
+
+function showToast(message) {
+    const toast = byId("toast");
+    toast.textContent = message;
+    toast.hidden = false;
+    clearTimeout(showToast.timer);
+    showToast.timer = setTimeout(() => { toast.hidden = true; }, 6000);
+}
+
+function element(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text != null) node.textContent = text;
+    return node;
+}
+
+function renderTickerStrip() {
+    const strip = byId("tickerStrip");
+    strip.replaceChildren();
+    CONFIG.instruments.forEach(instrument => {
+        const quote = state.quotes[instrument.symbol];
+        const button = element("button", `ticker-item${instrument.symbol === state.selectedSymbol ? " active" : ""}`);
+        button.type = "button";
+        button.dataset.symbol = instrument.symbol;
+        button.setAttribute("aria-label", `Select ${instrument.name}`);
+        button.append(
+            element("span", "ticker-symbol", instrument.symbol),
+            element("span", "ticker-price", quote ? formatPrice(quote.close, quote.currency) : "--"),
+            element("span", "ticker-market", instrument.market),
+        );
+        const change = element("span", "ticker-change", quote ? formatPercent(quote.percent_change) : "UNAVAILABLE");
+        if (quote) {
+            change.classList.add(quote.status === "stale" ? "stale-text" : Number(quote.percent_change) >= 0 ? "positive" : "negative");
+        }
+        button.append(change);
+        button.addEventListener("click", () => selectInstrument(instrument.symbol));
+        strip.append(button);
+    });
+}
+
+function renderMarketTable() {
+    const body = byId("marketTableBody");
+    body.replaceChildren();
+    CONFIG.instruments.forEach(instrument => {
+        const quote = state.quotes[instrument.symbol];
+        const row = document.createElement("tr");
+        const labels = ["SYMBOL", "INSTRUMENT", "MARKET"];
+        const values = [instrument.symbol, instrument.name, instrument.market];
+        values.forEach((value, index) => {
+            const cell = element("td", index === 0 ? "symbol-cell" : index === 1 ? "name-cell" : "", value);
+            cell.dataset.label = labels[index];
+            row.append(cell);
+        });
+        const priceCell = element("td", "", quote ? formatPrice(quote.close, quote.currency) : "--");
+        priceCell.dataset.label = "PRICE";
+        row.append(priceCell);
+        const change = element("td", quote ? (Number(quote.percent_change) >= 0 ? "positive" : "negative") : "", quote ? formatPercent(quote.percent_change) : "--");
+        change.dataset.label = "CHANGE";
+        const volumeCell = element("td", "", quote ? formatVolume(quote.volume) : "--");
+        volumeCell.dataset.label = "VOLUME";
+        row.append(change, volumeCell);
+        const statusCell = document.createElement("td");
+        statusCell.dataset.label = "STATUS";
+        const status = quote?.status || "unavailable";
+        statusCell.append(element("span", `status-pill ${status}`, status.toUpperCase()));
+        const updatedCell = element("td", "", quote ? formatTimestamp(quote.fetched_at, true) : "--");
+        updatedCell.dataset.label = "UPDATED";
+        row.append(statusCell, updatedCell);
+        body.append(row);
+    });
+}
+
+function updateSelectedQuote() {
+    const quote = state.quotes[state.selectedSymbol];
+    byId("headlinePrice").textContent = quote ? formatPrice(quote.close, quote.currency) : "--";
+    byId("priceUpdated").textContent = quote ? formatTimestamp(quote.fetched_at, true) : "No stored price";
+    const badge = byId("freshnessBadge");
+    badge.className = `freshness-badge ${quote?.status || ""}`;
+    badge.textContent = quote?.status === "stale" ? "LAST KNOWN" : quote ? "LIVE" : "UNAVAILABLE";
+}
+
+async function refreshQuotes() {
+    setConnection("", "UPDATING");
+    try {
+        const payload = await fetchJson("/quotes");
+        state.quotes = mergeWithLastKnown(payload.quotes);
+        storeLiveQuotes(payload.quotes || {});
+        const available = Object.values(state.quotes).filter(Boolean).length;
+        const stale = Object.values(state.quotes).some(quote => quote?.status === "stale");
+        byId("tickerCount").textContent = `${available} / ${CONFIG.instruments.length}`;
+        byId("lastUpdated").textContent = formatTimestamp(payload.requested_at || new Date().toISOString());
+        setConnection(payload.status === "ok" && !stale ? "ok" : available ? "stale" : "err", payload.status === "ok" && !stale ? "CONNECTED" : available ? "PARTIAL / STALE" : "UNAVAILABLE");
+    } catch {
+        state.quotes = mergeWithLastKnown({});
+        const available = Object.values(state.quotes).filter(Boolean).length;
+        byId("tickerCount").textContent = `${available} / ${CONFIG.instruments.length}`;
+        byId("lastUpdated").textContent = formatTimestamp(new Date().toISOString());
+        setConnection(available ? "stale" : "err", available ? "LAST KNOWN DATA" : "UNAVAILABLE");
+        showToast(available ? "Live prices are unavailable. Showing the last successfully updated prices." : "Market prices are temporarily unavailable.");
+    }
+    renderTickerStrip();
+    renderMarketTable();
+    updateSelectedQuote();
+    renderAnalytics();
+}
+
+function calculateMetrics(values) {
+    const rows = values
+        .map(row => ({ ...row, closeNumber: Number(row.close) }))
+        .filter(row => Number.isFinite(row.closeNumber))
+        .sort((a, b) => new Date(a.datetime) - new Date(b.datetime));
+    if (rows.length < 2) return null;
+    const closes = rows.map(row => row.closeNumber);
+    const returns = closes.slice(1).map((value, index) => ((value / closes[index]) - 1) * 100);
+    const meanReturn = returns.reduce((sum, value) => sum + value, 0) / returns.length;
+    const variance = returns.reduce((sum, value) => sum + ((value - meanReturn) ** 2), 0) / returns.length;
+    const start = closes[0];
+    const end = closes.at(-1);
+    return {
+        rows,
+        start,
+        end,
+        return_pct: ((end / start) - 1) * 100,
+        high: Math.max(...closes),
+        low: Math.min(...closes),
+        average: closes.reduce((sum, value) => sum + value, 0) / closes.length,
+        volatility_pct: Math.sqrt(variance),
+        volume: rows.reduce((sum, row) => sum + (Number(row.volume) || 0), 0),
+    };
+}
+
+function showChartState(message) {
+    const node = byId("chartLoading");
+    node.textContent = message;
+    node.hidden = false;
+}
+
+function renderChart(metrics, instrument) {
     if (state.chart) state.chart.destroy();
-
-    const grad = ctx.createLinearGradient(0, 0, 0, 340);
-    grad.addColorStop(0, tk.colorDim);
-    grad.addColorStop(1, 'rgba(0,0,0,0)');
-
-    const up = prices[prices.length - 1] >= prices[0];
-    const lineColor = up ? tk.color : '#ff5252';
-
-    state.chart = new Chart(ctx, {
-        type: 'line',
+    const context = byId("priceChart").getContext("2d");
+    state.chart = new Chart(context, {
+        type: "line",
         data: {
-            labels,
-            datasets: [{
-                data: prices,
-                borderColor: lineColor,
-                backgroundColor: grad,
-                borderWidth: 2,
-                fill: true,
-                tension: 0.3,
-                pointRadius: 0,
-                pointHoverRadius: 5,
-                pointHoverBackgroundColor: lineColor,
-                pointHoverBorderColor: '#fff',
-                pointHoverBorderWidth: 1.5,
-            }],
+            labels: metrics.rows.map(row => row.datetime),
+            datasets: [{ data: metrics.rows.map(row => row.closeNumber), borderColor: "#35d98b", backgroundColor: "rgba(53,217,139,.08)", borderWidth: 1.5, pointRadius: 0, pointHoverRadius: 4, fill: true, tension: .15 }],
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            interaction: { intersect: false, mode: 'index' },
-            plugins: {
-                legend: { display: false },
-                tooltip: {
-                    backgroundColor: 'rgba(12,16,23,0.95)',
-                    titleColor: '#5a6b82',
-                    bodyColor: '#e8edf5',
-                    bodyFont: { family: 'JetBrains Mono', size: 12, weight: '600' },
-                    titleFont: { family: 'JetBrains Mono', size: 9 },
-                    padding: 10,
-                    cornerRadius: 4,
-                    borderColor: 'rgba(255,255,255,0.06)',
-                    borderWidth: 1,
-                    displayColors: false,
-                    callbacks: {
-                        label: (item) => `  ${fmt(item.raw)}`,
-                    },
-                },
-            },
+            interaction: { intersect: false, mode: "index" },
+            plugins: { legend: { display: false }, tooltip: { displayColors: false, callbacks: { label: ctx => `${instrument.symbol} ${formatPrice(ctx.parsed.y)}` } } },
             scales: {
-                x: {
-                    grid: { color: 'rgba(255,255,255,0.025)', drawBorder: false },
-                    ticks: { color: '#3a4a5e', font: { family: 'JetBrains Mono', size: 9 }, maxTicksLimit: 7, maxRotation: 0 },
-                },
-                y: {
-                    position: 'right',
-                    grid: { color: 'rgba(255,255,255,0.025)', drawBorder: false },
-                    ticks: { color: '#3a4a5e', font: { family: 'JetBrains Mono', size: 9 }, callback: v => '$' + v.toFixed(2) },
-                },
+                x: { grid: { display: false }, ticks: { color: "#697981", maxTicksLimit: 7, font: { family: "IBM Plex Mono", size: 10 } } },
+                y: { position: "right", grid: { color: "#192228" }, ticks: { color: "#697981", font: { family: "IBM Plex Mono", size: 10 }, callback: value => `$${Number(value).toFixed(2)}` } },
             },
-            animation: { duration: 600, easing: 'easeOutQuart' },
         },
     });
+    byId("chartLoading").hidden = true;
 }
 
-// ─── AI MARKET SUMMARY (Prices tab) ─────────────────────────
-function generateAISummary(quotes, band) {
-    const lines = [];
-    const apiTickers = CONFIG.TICKERS.filter(t => t.isApi);
-
-    apiTickers.forEach(t => {
-        const d = quotes[t.symbol];
-        if (!d) { lines.push(`<span class="highlight">${t.symbol}</span> — Data unavailable.`); return; }
-
-        const price = parseFloat(d.close);
-        const change = parseFloat(d.change);
-        const pct = parseFloat(d.percent_change);
-        const vol = parseInt(d.volume || 0);
-        const high = parseFloat(d.high);
-        const low = parseFloat(d.low);
-        const range = ((high - low) / low * 100).toFixed(2);
-
-        let direction, sentiment, cls;
-        if (pct > 1) { direction = 'surged'; sentiment = 'Bullish momentum'; cls = 'positive'; }
-        else if (pct > 0) { direction = 'edged higher'; sentiment = 'Mildly positive'; cls = 'positive'; }
-        else if (pct > -1) { direction = 'dipped slightly'; sentiment = 'Neutral to bearish'; cls = 'negative'; }
-        else { direction = 'fell sharply'; sentiment = 'Bearish pressure'; cls = 'negative'; }
-
-        let volContext;
-        if (vol > 500000) volContext = 'on heavy volume';
-        else if (vol > 100000) volContext = 'on moderate volume';
-        else if (vol > 0) volContext = 'on light volume';
-        else volContext = 'with minimal trading activity';
-
-        lines.push(
-            `<span class="highlight">${t.symbol}</span> ${direction} <span class="${cls}">${fmtPct(pct)}</span> to <span class="highlight">${fmt(price)}</span> ${volContext} (${fmtVol(vol)}). Day range: ${fmt(low)}–${fmt(high)} (${range}% spread). ${sentiment}.`
-        );
-    });
-
-    const biochar = CONFIG.TICKERS.find(t => t.symbol === 'BIOCHAR');
-    lines.push(
-        `<span class="highlight">BIOCHAR</span> voluntary credits assessed at <span class="highlight">${fmt(biochar.refPrice)}${biochar.refUnit}</span>. Market stable with steady demand from tech sector removal commitments (Source: Puro.earth / S&P Platts).`
-    );
-
-    const krbn = quotes['KRBN'];
-    const grn = quotes['GRN'];
-    let outlook = 'Mixed signals across carbon markets.';
-    if (krbn && grn) {
-        const avgChange = (parseFloat(krbn.percent_change) + parseFloat(grn.percent_change)) / 2;
-        if (avgChange > 0.5) outlook = '<span class="positive">OUTLOOK: Bullish</span> — Carbon credit indices trending higher. Watch for continued momentum.';
-        else if (avgChange < -0.5) outlook = '<span class="negative">OUTLOOK: Bearish</span> — Selling pressure across carbon markets. Monitor EU policy developments.';
-        else outlook = 'OUTLOOK: Neutral — Markets consolidating. Key levels to watch: KRBN $29–$31 range.';
-    }
-    lines.push(outlook);
-
-    return lines;
+function updateMetricDisplay(metrics) {
+    byId("headlineChange").textContent = formatPercent(metrics.return_pct);
+    byId("headlineChange").className = metrics.return_pct >= 0 ? "positive" : "negative";
+    byId("statOpen").textContent = formatPrice(metrics.start);
+    byId("statHigh").textContent = formatPrice(metrics.high);
+    byId("statLow").textContent = formatPrice(metrics.low);
+    byId("statAvg").textContent = formatPrice(metrics.average);
+    byId("statVolatility").textContent = `${metrics.volatility_pct.toFixed(2)}%`;
 }
 
-async function renderAISummary(quotes) {
+function computedSummary(metrics) {
+    const direction = metrics.return_pct > .25 ? "advanced" : metrics.return_pct < -.25 ? "declined" : "was broadly flat";
+    return [
+        `The security ${direction} ${Math.abs(metrics.return_pct).toFixed(2)}% over the selected period.`,
+        `The observed range was ${formatPrice(metrics.low)} to ${formatPrice(metrics.high)}.`,
+        `Average interval volatility measured ${metrics.volatility_pct.toFixed(2)}%.`,
+        "This security is a market proxy; it is not a direct allowance spot quote.",
+    ];
+}
+
+function renderSummaryLines(lines) {
+    const body = byId("aiSummaryBody");
+    body.replaceChildren(...lines.map(line => element("p", "summary-line", line)));
+    byId("aiTimestamp").textContent = formatTimestamp(new Date().toISOString());
+}
+
+async function requestAISummary(metrics) {
+    renderSummaryLines(computedSummary(metrics));
     try {
-        DOM.aiSummaryBody.innerHTML = '<div class="ai-loading"><span class="terminal-cursor">▮</span> Requesting Gemini analysis...</div>';
-
-        const r = await fetch(`${CONFIG.BASE_URL}/ai-summary`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prices: quotes, timeframe: state.selectedAIBand })
+        const serializable = { ...metrics };
+        delete serializable.rows;
+        const data = await fetchJson("/ai-summary", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ symbol: state.selectedSymbol, timeframe: state.selectedTimeframe, metrics: serializable }),
         });
-        const data = await r.json();
-
-        const lines = data.summary || generateAISummary(quotes, state.selectedAIBand);
-        DOM.aiSummaryBody.innerHTML = lines.map(l => `<div class="ai-line">${l}</div>`).join('');
-        DOM.aiTimestamp.textContent = new Date().toLocaleTimeString();
-    } catch (e) {
-        const lines = generateAISummary(quotes, state.selectedAIBand);
-        DOM.aiSummaryBody.innerHTML = lines.map(l => `<div class="ai-line">${l}</div>`).join('');
-        DOM.aiTimestamp.textContent = new Date().toLocaleTimeString();
+        if (Array.isArray(data.summary) && data.summary.length === 4) renderSummaryLines(data.summary.map(String));
+    } catch {
+        // The deterministic, computed summary remains visible when AI is offline.
     }
 }
 
-// ─── TOP BUYERS ─────────────────────────────────────────────
-function renderBuyers(container = DOM.buyersList) {
-    if (!container) return;
-    const maxAmount = TOP_BUYERS[0].amount;
-    container.innerHTML = TOP_BUYERS.map((b, i) => {
-        const pct = (b.amount / maxAmount * 100).toFixed(0);
-        const rankClass = i === 0 ? 'gold' : i === 1 ? 'silver' : i === 2 ? 'bronze' : '';
-        return `<div class="buyer-row">
-            <span class="buyer-rank ${rankClass}">#${i + 1}</span>
-            <div class="buyer-info">
-                <a class="buyer-name" href="${b.source}" target="_blank" title="View ${b.name} sustainability report">${b.name}</a>
-            </div>
-            <div class="buyer-bar-container">
-                <div class="buyer-bar ${b.type}" style="width: 0%;" data-width="${pct}"></div>
-            </div>
-            <span class="buyer-amount">${b.label}</span>
-        </div>`;
-    }).join('');
+async function loadChart() {
+    const instrument = instrumentFor(state.selectedSymbol);
+    const timeframe = CONFIG.timeframes[state.selectedTimeframe];
+    showChartState("Loading verified history...");
+    byId("headlineChange").textContent = "--";
+    try {
+        const data = await fetchJson(`/time_series?symbol=${encodeURIComponent(state.selectedSymbol)}&interval=${timeframe.interval}&outputsize=${timeframe.outputsize}`);
+        const metrics = calculateMetrics(data.values || []);
+        if (!metrics) throw new Error("Not enough verified history");
+        renderChart(metrics, instrument);
+        updateMetricDisplay(metrics);
+        requestAISummary(metrics);
+    } catch {
+        if (state.chart) { state.chart.destroy(); state.chart = null; }
+        showChartState("Verified historical data is temporarily unavailable. No simulated series is shown.");
+        ["statOpen", "statHigh", "statLow", "statAvg", "statVolatility"].forEach(id => { byId(id).textContent = "--"; });
+        byId("aiSummaryBody").replaceChildren(element("p", "muted", "Analysis is unavailable until verified historical data can be loaded."));
+    }
+}
 
-    requestAnimationFrame(() => {
-        setTimeout(() => {
-            container.querySelectorAll('.buyer-bar').forEach(bar => {
-                bar.style.width = bar.dataset.width + '%';
-            });
-        }, 100);
+function selectInstrument(symbol) {
+    state.selectedSymbol = symbol;
+    const instrument = instrumentFor(symbol);
+    byId("chartTitle").textContent = `${instrument.symbol} / ${instrument.name}`;
+    byId("chartMarket").textContent = `${instrument.market.toUpperCase()} / ${instrument.type.toUpperCase()}`;
+    byId("chartSourceLink").href = instrument.source;
+    renderTickerStrip();
+    updateSelectedQuote();
+    loadChart();
+}
+
+function setupTimeframes() {
+    byId("timeframeSelector").addEventListener("click", event => {
+        const button = event.target.closest("button[data-range]");
+        if (!button) return;
+        state.selectedTimeframe = button.dataset.range;
+        byId("timeframeSelector").querySelectorAll("button").forEach(item => item.classList.toggle("active", item === button));
+        loadChart();
     });
 }
 
-// ─── NEWS TICKER (always visible) ───────────────────────────
-let newsIndex = 0;
-let newsInterval = null;
-let activeNews = [];
+function setupTabs() {
+    const tabs = [...byId("tabNav").querySelectorAll("[role=tab]")];
+    function activate(tab) {
+        tabs.forEach(item => {
+            const active = item === tab;
+            item.classList.toggle("active", active);
+            item.setAttribute("aria-selected", String(active));
+            byId(item.getAttribute("aria-controls")).hidden = !active;
+        });
+        if (tab.dataset.tab === "news") loadNews();
+        if (tab.dataset.tab === "trends") renderAnalytics();
+    }
+    tabs.forEach((tab, index) => {
+        tab.addEventListener("click", () => activate(tab));
+        tab.addEventListener("keydown", event => {
+            if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+            event.preventDefault();
+            const next = event.key === "ArrowRight" ? (index + 1) % tabs.length : (index - 1 + tabs.length) % tabs.length;
+            tabs[next].focus();
+            activate(tabs[next]);
+        });
+    });
+}
 
-async function renderNewsTicker() {
+async function loadNews(force = false) {
+    if (state.news.length && !force) { renderNews(); return; }
     try {
-        const r = await fetch(`${CONFIG.BASE_URL}/news`);
-        activeNews = await r.json();
-        if (!activeNews || activeNews.length === 0) activeNews = NEWS_ITEMS;
-        state.allNews = activeNews;
-
-        showNewsItem(0);
-
-        if (newsInterval) clearInterval(newsInterval);
-        newsInterval = setInterval(() => {
-            newsIndex = (newsIndex + 1) % activeNews.length;
-            showNewsItem(newsIndex);
-        }, 5000);
-    } catch (e) {
-        activeNews = NEWS_ITEMS;
-        state.allNews = activeNews;
-        showNewsItem(0);
+        const payload = await fetchJson("/news");
+        state.news = Array.isArray(payload.items) ? payload.items : [];
+    } catch {
+        state.news = [];
     }
+    renderNews();
+    startNewsTicker();
 }
 
-function showNewsItem(idx) {
-    if (!activeNews || activeNews.length === 0) return;
-    const n = activeNews[idx];
-    const searchUrl = n.url || ('https://www.google.com/search?q=' + encodeURIComponent(n.text));
-    const catLabels = { market: 'MARKET', policy: 'POLICY', science: 'SCIENCE', deals: 'DEALS' };
-    DOM.tickerScroll.innerHTML = `
-        <a class="news-item" href="${searchUrl}" target="_blank" title="View Source">
-            <span class="news-dot ${n.cat}"></span>
-            <span style="font-size:9px;font-weight:700;color:var(--text-2);letter-spacing:0.08em;margin-right:4px">${catLabels[n.cat] || ''}</span>
-            ${n.text}
-        </a>
-        <span class="news-counter">${idx + 1}/${activeNews.length}</span>
-    `;
-}
-
-// ─── NEWS FEED (News tab) ────────────────────────────────────
-async function loadNewsFeed() {
-    if (state.allNews.length === 0) {
-        try {
-            const r = await fetch(`${CONFIG.BASE_URL}/news`);
-            state.allNews = await r.json();
-            if (!state.allNews || state.allNews.length === 0) state.allNews = NEWS_ITEMS;
-        } catch (e) {
-            state.allNews = NEWS_ITEMS;
-        }
-    }
-    renderNewsFeed(state.allNews);
-}
-
-function renderNewsFeed(news) {
-    const filtered = state.selectedNewsFilter === 'all'
-        ? news
-        : news.filter(n => n.cat === state.selectedNewsFilter);
-
-    if (filtered.length === 0) {
-        DOM.newsFeed.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-3);">No news in this category.</div>';
+function renderNews() {
+    const feed = byId("newsFeed");
+    const filtered = state.selectedNewsFilter === "all" ? state.news : state.news.filter(item => item.cat === state.selectedNewsFilter);
+    feed.replaceChildren();
+    if (!filtered.length) {
+        feed.append(element("p", "empty-state", "Verified news is temporarily unavailable. No placeholder headlines are being shown."));
         return;
     }
+    filtered.forEach(item => {
+        const url = safeUrl(item.url);
+        if (!url) return;
+        const card = element("article", "news-card");
+        const meta = element("div", "news-card-meta");
+        meta.append(element("span", "", (item.cat || "news").toUpperCase()), element("time", "", item.published_at ? formatTimestamp(item.published_at, true) : "DATE UNAVAILABLE"));
+        const link = element("a", "", item.text);
+        link.href = url;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        card.append(meta, link, element("div", "news-card-source", item.source || new URL(url).hostname));
+        feed.append(card);
+    });
+}
 
-    DOM.newsFeed.innerHTML = filtered.map(n => {
-        const url = n.url || '#';
-        const catLabels = { market: 'MARKET', policy: 'POLICY', science: 'SCIENCE', deals: 'DEALS' };
-        const source = n.source || new URL(url).hostname || '';
-        return `<div class="news-card">
-            <span class="news-card-dot ${n.cat}"></span>
-            <div class="news-card-content">
-                <div class="news-card-category ${n.cat}">${catLabels[n.cat] || 'NEWS'}</div>
-                <div class="news-card-title"><a href="${url}" target="_blank">${n.text}</a></div>
-                ${source ? `<div class="news-card-source">${source}</div>` : ''}
-            </div>
-        </div>`;
-    }).join('');
+function startNewsTicker() {
+    clearInterval(state.newsTimer);
+    const ticker = byId("tickerScroll");
+    function showCurrent() {
+        ticker.replaceChildren();
+        if (!state.news.length) { ticker.textContent = "Verified headlines are temporarily unavailable."; return; }
+        const item = state.news[state.newsIndex % state.news.length];
+        const url = safeUrl(item.url);
+        if (!url) return;
+        const link = element("a", "", `${(item.cat || "news").toUpperCase()} / ${item.text}`);
+        link.href = url; link.target = "_blank"; link.rel = "noopener noreferrer";
+        ticker.append(link);
+    }
+    showCurrent();
+    if (state.news.length > 1) state.newsTimer = setInterval(() => { state.newsIndex += 1; showCurrent(); }, 7000);
 }
 
 function setupNewsFilters() {
-    if (!DOM.newsFilterGroup) return;
-    DOM.newsFilterGroup.addEventListener('click', e => {
-        const btn = e.target.closest('.news-filter-btn');
-        if (!btn) return;
-        state.selectedNewsFilter = btn.dataset.filter;
-        DOM.newsFilterGroup.querySelectorAll('.news-filter-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        renderNewsFeed(state.allNews);
+    byId("newsFilterGroup").addEventListener("click", event => {
+        const button = event.target.closest("button[data-filter]");
+        if (!button) return;
+        state.selectedNewsFilter = button.dataset.filter;
+        byId("newsFilterGroup").querySelectorAll("button").forEach(item => item.classList.toggle("active", item === button));
+        renderNews();
     });
 }
 
-// ─── TRENDS (Trends tab) ────────────────────────────────────
-function renderTrends() {
-    renderTopMovers();
-    renderSentiment();
-    renderProjectCategories();
-    renderBuyers(DOM.trendsBuyersList);
-}
-
-function renderTopMovers() {
-    if (!DOM.moversList) return;
-    const apiTickers = CONFIG.TICKERS.filter(t => t.isApi);
-
-    // Sort by absolute percent change
-    const sorted = apiTickers
-        .filter(t => state.prices[t.symbol])
-        .map(t => {
-            const d = state.prices[t.symbol];
-            return {
-                symbol: t.symbol,
-                name: t.short,
-                change: parseFloat(d.percent_change || 0)
-            };
-        })
-        .sort((a, b) => Math.abs(b.change) - Math.abs(a.change));
-
-    if (sorted.length === 0) {
-        DOM.moversList.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-3);">Awaiting price data...</div>';
-        return;
-    }
-
-    DOM.moversList.innerHTML = sorted.map(m => `
-        <div class="mover-row">
-            <span class="mover-symbol">${m.symbol}</span>
-            <span class="mover-name">${m.name}</span>
-            <span class="mover-change ${m.change >= 0 ? 'up' : 'down'}">${fmtPct(m.change)}</span>
-        </div>
-    `).join('');
-}
-
-function renderSentiment() {
-    if (!DOM.sentimentValue || !DOM.sentimentFill) return;
-
-    const apiTickers = CONFIG.TICKERS.filter(t => t.isApi);
-    const changes = apiTickers
-        .filter(t => state.prices[t.symbol])
-        .map(t => parseFloat(state.prices[t.symbol].percent_change || 0));
-
-    if (changes.length === 0) {
-        DOM.sentimentValue.textContent = '--';
-        return;
-    }
-
-    const avg = changes.reduce((a, b) => a + b, 0) / changes.length;
-    let label, fillPct;
-
-    if (avg > 1) { label = 'BULLISH'; fillPct = 85; }
-    else if (avg > 0.3) { label = 'MILDLY BULLISH'; fillPct = 65; }
-    else if (avg > -0.3) { label = 'NEUTRAL'; fillPct = 50; }
-    else if (avg > -1) { label = 'MILDLY BEARISH'; fillPct = 35; }
-    else { label = 'BEARISH'; fillPct = 15; }
-
-    DOM.sentimentValue.textContent = label;
-    DOM.sentimentFill.style.width = fillPct + '%';
-}
-
-function renderProjectCategories() {
-    if (!DOM.projectCards) return;
-    DOM.projectCards.innerHTML = PROJECT_CATEGORIES.map(p => `
-        <div class="project-card">
-            <div class="project-card-icon">${p.icon}</div>
-            <div class="project-card-name">${p.name}</div>
-            <div class="project-card-desc">${p.desc}</div>
-            <span class="project-card-tag ${p.type}">${p.type === 'nature' ? 'NATURE-BASED' : 'ENGINEERED'}</span>
-        </div>
-    `).join('');
-}
-
-// ─── MARKET TABLE ───────────────────────────────────────────
-function updateMarketTable(quotes) {
-    const apiRows = CONFIG.TICKERS.filter(t => t.isApi).map(t => {
-        const d = quotes[t.symbol];
-        if (!d) return `<tr><td class="td-ticker">${t.symbol}</td><td class="td-name">${t.short}</td><td colspan="8" style="color:var(--text-3)">Unavailable</td></tr>`;
-        const change = parseFloat(d.change);
-        const cls = change >= 0 ? 'td-positive' : 'td-negative';
-        const typeClass = t.badge === 'ENERGY' ? 'energy' : 'compliance';
-        return `<tr>
-            <td class="td-ticker">${t.symbol}</td>
-            <td class="td-name">${t.short}</td>
-            <td>${fmt(d.close)}</td>
-            <td class="${cls}">${fmtChange(change)}</td>
-            <td class="${cls}">${fmtPct(d.percent_change)}</td>
-            <td>${fmtVol(d.volume)}</td>
-            <td>${fmt(d.fifty_two_week?.high)}</td>
-            <td>${fmt(d.fifty_two_week?.low)}</td>
-            <td><span class="td-type ${typeClass}">${t.badge}</span></td>
-            <td><a class="source-link" href="${t.source}" target="_blank">↗</a></td>
-        </tr>`;
-    }).join('');
-
-    const staticRows = CONFIG.TICKERS.filter(t => !t.isApi).map(t =>
-        `<tr>
-            <td class="td-ticker" style="color:var(--purple)">${t.symbol}</td>
-            <td class="td-name">${t.short}</td>
-            <td>${fmt(t.refPrice)}${t.refUnit}</td>
-            <td style="color:var(--text-3)">—</td>
-            <td style="color:var(--text-3)">—</td>
-            <td style="color:var(--text-3)">OTC</td>
-            <td style="color:var(--text-3)">—</td>
-            <td style="color:var(--text-3)">—</td>
-            <td><span class="td-type voluntary">${t.badge}</span></td>
-            <td><a class="source-link" href="${t.source}" target="_blank">↗</a></td>
-        </tr>`
-    ).join('');
-
-    DOM.marketTableBody.innerHTML = apiRows + staticRows;
-}
-
-// ─── AI CHAT (AI Analytics tab) ──────────────────────────────
-function setupAIChat() {
-    if (!DOM.chatInput || !DOM.chatSendBtn) return;
-
-    // Send on button click
-    DOM.chatSendBtn.addEventListener('click', () => sendChatMessage());
-
-    // Send on Enter
-    DOM.chatInput.addEventListener('keydown', e => {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            sendChatMessage();
-        }
+function renderAnalytics() {
+    const quotes = CONFIG.instruments.map(item => ({ item, quote: state.quotes[item.symbol] })).filter(entry => entry.quote);
+    const movers = byId("moversList");
+    movers.replaceChildren();
+    if (!quotes.length) movers.append(element("p", "empty-state", "Awaiting market data."));
+    const maxMove = Math.max(1, ...quotes.map(entry => Math.abs(Number(entry.quote.percent_change) || 0)));
+    quotes.sort((a, b) => Math.abs(Number(b.quote.percent_change)) - Math.abs(Number(a.quote.percent_change))).forEach(entry => {
+        const change = Number(entry.quote.percent_change) || 0;
+        const row = element("div", "mover-row");
+        const bar = element("div", "mover-bar");
+        const fill = document.createElement("span");
+        fill.style.width = `${Math.abs(change) / maxMove * 100}%`;
+        if (change < 0) fill.className = "down";
+        bar.append(fill);
+        row.append(element("strong", "", entry.item.symbol), bar, element("span", change >= 0 ? "positive" : "negative", formatPercent(change)));
+        movers.append(row);
     });
-
-    // Quick prompts
-    if (DOM.quickPrompts) {
-        DOM.quickPrompts.addEventListener('click', e => {
-            const btn = e.target.closest('.quick-prompt-btn');
-            if (!btn) return;
-            DOM.chatInput.value = btn.dataset.prompt;
-            sendChatMessage();
-        });
-    }
+    const changes = quotes.map(entry => Number(entry.quote.percent_change)).filter(Number.isFinite);
+    const advances = changes.filter(value => value > 0).length;
+    const declines = changes.filter(value => value < 0).length;
+    byId("sentimentValue").textContent = changes.length ? `${advances} UP / ${declines} DOWN` : "--";
+    byId("sentimentDetail").textContent = changes.length ? `Breadth across ${changes.length} available carbon-linked securities. This is descriptive, not a sentiment forecast.` : "Awaiting market data.";
+    const guide = byId("instrumentGuide");
+    guide.replaceChildren(...CONFIG.instruments.map(item => {
+        const card = element("article", "guide-card");
+        card.append(element("strong", "", item.symbol), element("span", "", item.type.toUpperCase()), element("p", "", item.description));
+        return card;
+    }));
 }
 
-async function sendChatMessage() {
-    const message = DOM.chatInput.value.trim();
-    if (!message) return;
+function appendChatMessage(role, content) {
+    const container = byId("chatMessages");
+    container.querySelector(".chat-welcome")?.remove();
+    const message = element("div", `chat-msg ${role}`);
+    message.append(element("div", "chat-msg-header", role === "user" ? "YOU" : "ADVANCEMARKETS AI"), element("div", "chat-msg-body", content));
+    container.append(message);
+    container.scrollTop = container.scrollHeight;
+}
 
-    // Clear input
-    DOM.chatInput.value = '';
-
-    // Remove welcome message if present
-    const welcome = DOM.chatMessages.querySelector('.chat-welcome');
-    if (welcome) welcome.remove();
-
-    // Add user message
-    appendChatMessage('user', message);
-
-    // Show typing indicator
-    const typingEl = showTypingIndicator();
-
-    // Disable send button
-    DOM.chatSendBtn.disabled = true;
-
+async function sendChatMessage(message) {
+    const sendButton = byId("chatSendBtn");
+    appendChatMessage("user", message);
+    sendButton.disabled = true;
+    sendButton.textContent = "WAIT";
     try {
-        const r = await fetch(`${CONFIG.BASE_URL}/ai-chat`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                message: message,
-                history: state.chatHistory
-            })
+        const data = await fetchJson("/ai-chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message, history: state.chatHistory.slice(-12) }),
         });
-        const data = await r.json();
-
-        // Remove typing indicator
-        if (typingEl) typingEl.remove();
-
-        // Add AI response with markdown rendering
-        const reply = data.reply || 'Sorry, I could not generate a response.';
-        appendChatMessage('ai', reply, true);
-
-        // Update chat history
-        state.chatHistory.push(
-            { role: 'user', parts: message },
-            { role: 'model', parts: reply }
-        );
-
-        // Keep history reasonable length (last 10 exchanges)
-        if (state.chatHistory.length > 20) {
-            state.chatHistory = state.chatHistory.slice(-20);
-        }
-
-    } catch (e) {
-        if (typingEl) typingEl.remove();
-        appendChatMessage('ai', `Error: Could not reach the AI service. ${e.message}`);
-    }
-
-    DOM.chatSendBtn.disabled = false;
-    DOM.chatInput.focus();
-}
-
-function appendChatMessage(role, content, useMarkdown = false) {
-    const msgEl = document.createElement('div');
-    msgEl.className = `chat-msg ${role}`;
-
-    const label = role === 'user' ? '👤 YOU' : '🤖 ADVANCEMARKETS AI';
-    let bodyContent = content;
-
-    if (useMarkdown && typeof marked !== 'undefined') {
-        bodyContent = marked.parse(content);
-    } else {
-        bodyContent = content.replace(/\n/g, '<br>');
-    }
-
-    msgEl.innerHTML = `
-        <div class="chat-msg-header">${label}</div>
-        <div class="chat-msg-body">${bodyContent}</div>
-    `;
-
-    DOM.chatMessages.appendChild(msgEl);
-    DOM.chatMessages.scrollTop = DOM.chatMessages.scrollHeight;
-}
-
-function showTypingIndicator() {
-    const el = document.createElement('div');
-    el.className = 'chat-typing';
-    el.innerHTML = `
-        <div class="typing-dots"><span></span><span></span><span></span></div>
-        <span>AdvanceMarkets AI is thinking...</span>
-    `;
-    DOM.chatMessages.appendChild(el);
-    DOM.chatMessages.scrollTop = DOM.chatMessages.scrollHeight;
-    return el;
-}
-
-// ─── INTERACTIONS ───────────────────────────────────────────
-function selectTicker(symbol) {
-    const tk = CONFIG.TICKERS.find(t => t.symbol === symbol);
-    if (!tk || !tk.isApi) return;
-    state.selectedTicker = symbol;
-
-    const chartSourceLink = document.getElementById('chartSourceLink');
-    if (chartSourceLink) chartSourceLink.href = tk.source;
-
-    DOM.tickerStrip.querySelectorAll('.ticker-item').forEach(el => {
-        el.classList.toggle('active', el.dataset.symbol === symbol);
-    });
-
-    loadChart(symbol, state.selectedTimeframe);
-}
-
-function setupTimeframeButtons() {
-    DOM.timeframeSelector.addEventListener('click', e => {
-        const btn = e.target.closest('.tf-btn');
-        if (!btn) return;
-        state.selectedTimeframe = btn.dataset.range;
-        DOM.timeframeSelector.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        loadChart(state.selectedTicker, btn.dataset.range);
-    });
-}
-
-function setupAITimebands() {
-    DOM.aiTimebandSelector.addEventListener('click', e => {
-        const btn = e.target.closest('.ai-tb-btn');
-        if (!btn) return;
-        state.selectedAIBand = btn.dataset.band;
-        DOM.aiTimebandSelector.querySelectorAll('.ai-tb-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        if (Object.keys(state.prices).length > 0) renderAISummary(state.prices);
-    });
-}
-
-// ─── MAIN LOOP ──────────────────────────────────────────────
-async function refreshData() {
-    try {
-        setStatus('', 'UPDATING');
-        const quotes = await fetchAllQuotes();
-        state.prices = quotes;
-
-        updateTickerStrip(quotes);
-        updateMarketTable(quotes);
-        renderAISummary(quotes);
-
-        CONFIG.TICKERS.filter(t => t.isApi).forEach(t => {
-            if (quotes[t.symbol]) state.prevPrices[t.symbol] = parseFloat(quotes[t.symbol].close);
-        });
-
-        DOM.lastUpdated.textContent = new Date().toLocaleTimeString();
-        setStatus('ok', 'CONNECTED');
-
-        if (state.isFirstLoad) {
-            state.isFirstLoad = false;
-            await loadChart(state.selectedTicker, state.selectedTimeframe);
-        }
-
-        // Update trends if tab is active
-        if (state.selectedTab === 'trends') {
-            renderTrends();
-        }
-    } catch (e) {
-        console.error('Refresh error:', e);
-        setStatus('err', 'ERROR');
-        toast('Data refresh failed. Retrying...');
+        const reply = String(data.reply || "No response was returned.");
+        appendChatMessage("ai", reply);
+        state.chatHistory.push({ role: "user", parts: message }, { role: "model", parts: reply });
+        state.chatHistory = state.chatHistory.slice(-12);
+    } catch (error) {
+        appendChatMessage("ai", error.message || "The research service is temporarily unavailable.");
+    } finally {
+        sendButton.disabled = false;
+        sendButton.textContent = "SEND";
+        byId("chatInput").focus();
     }
 }
 
-// ─── INIT ────────────────────────────────────────────────────
+function setupChat() {
+    byId("chatForm").addEventListener("submit", event => {
+        event.preventDefault();
+        const input = byId("chatInput");
+        const message = input.value.trim();
+        if (!message) return;
+        input.value = "";
+        sendChatMessage(message);
+    });
+    byId("quickPrompts").addEventListener("click", event => {
+        const button = event.target.closest("button[data-prompt]");
+        if (button) sendChatMessage(button.dataset.prompt);
+    });
+}
+
 async function init() {
-    console.log('🖥️ AdvanceMarkets Terminal v3.0 starting...');
-    console.log('🐍 Backend: Python / FastAPI');
-
-    // Setup UI
-    renderTickerStrip();
-    renderBuyers();
-    renderNewsTicker();
-    setupTimeframeButtons();
-    setupAITimebands();
     setupTabs();
+    setupTimeframes();
     setupNewsFilters();
-    setupAIChat();
-    updateApiDisplay();
-
-    // Load initial data
-    await refreshData();
-
-    // Auto-refresh
-    setInterval(refreshData, CONFIG.REFRESH_INTERVAL);
-
-    console.log('✅ Terminal ready');
+    setupChat();
+    state.quotes = mergeWithLastKnown({});
+    renderTickerStrip();
+    renderMarketTable();
+    renderAnalytics();
+    updateSelectedQuote();
+    await Promise.all([refreshQuotes(), loadNews()]);
+    await loadChart();
+    setInterval(refreshQuotes, CONFIG.refreshMs);
 }
 
-document.addEventListener('DOMContentLoaded', init);
+document.addEventListener("DOMContentLoaded", init);
